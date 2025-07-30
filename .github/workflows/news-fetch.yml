@@ -1,33 +1,32 @@
-name: Fetch Daily AI News
+name: Fetch AI News and Send to Discord
 
 on:
   schedule:
-    - cron: "0 10 * * *"  # Her gün 10:00 UTC (Türkiye saatiyle 13:00)
-  workflow_dispatch:  # Manuel çalıştırma
+    - cron: '0 9 * * *' # Her gün saat 09:00 UTC'de çalışır
+  workflow_dispatch:    # Manuel tetikleme imkanı
 
 jobs:
-  fetch-news:
+  fetch_and_post_news:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Repo'yu klonla
+      - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Python ortamını kur
+      - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.x'
 
-      - name: Gereksinimleri yükle
-        run: pip install -r requirements.txt
-
-      - name: Haberleri çek
-        run: python news_fetcher.py
-
-      - name: Değişiklikleri commitle ve pusha
+      - name: Install dependencies
         run: |
-          git config --global user.name "github-actions"
-          git config --global user.email "github-actions@github.com"
-          git add pending.json last_run.txt
-          git commit -m "Update news"
-          git push
+          python -m pip install --upgrade pip
+          pip install feedparser requests
+
+      - name: Run news fetch script
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          LAST_RUN_FILE: last_run.txt
+          RSS_SOURCES_JSON: rss_sources.json
+        run: |
+          python scripts/fetch_news.py
