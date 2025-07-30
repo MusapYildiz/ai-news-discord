@@ -1,77 +1,54 @@
-import requests
-import os
-import json
-import feedparser # RSS beslemelerini ayrıştırmak için
+import os, json, feedparser, requests
+from datetime import datetime, timezone
+from github import Github
 
-# Discord Webhook URL'lerini ortam değişkenlerinden alacağız
-APPROVAL_WEBHOOK_URL = os.getenv('APPROVAL_WEBHOOK_URL')
-NEWS_WEBHOOK_URL = os.getenv('NEWS_WEBHOOK_URL') # Şimdilik kullanılmayacak ama kalsın
+# Ayarlar
+RSS_FEEDS      = json.load(open('sites.json'))
+WEBHOOK        = os.environ['DISCORD_WEBHOOK']
+LAST_RUN_FILE  = 'last_run.txt'
 
-# Haber kaynakları (örnekler, bunları kendi belirlediğiniz 5 sitenin RSS URL'leriyle değiştirin)
-# Her bir sözlükte 'name' (site adı) ve 'rss_url' (RSS beslemesi URL'si) olmalı.
-NEWS_SOURCES = [
-    {"name": "Site 1 RSS", "rss_url": "https://example.com/site1/rss"},
-    {"name": "Site 2 RSS", "rss_url": "https://example.com/site2/feed"},
-    # Diğer 3 sitenizin RSS URL'lerini buraya ekleyin
-    # Örnek: {"name": "TechCrunch AI", "rss_url": "https://techcrunch.com/category/artificial-intelligence/feed/"},
-    # Örnek: {"name": "VentureBeat AI", "rss_url": "https://venturebeat.com/category/ai/feed/"},
-]
+# 1) Son çalıştırma zamanını oku (yoksa şimdi)
+if os.path.exists(LAST_RUN_FILE):
+    last_run = datetime.fromisoformat(open(LAST_RUN_FILE).read().strip())
+else:
+    last_run = datetime.now(timezone.utc)
 
-# Anahtar kelimeler (Türkçe ve İngilizce olarak AI ile ilgili terimleri ekledim)
-KEYWORDS = [
-    "yapay zeka", "makine öğrenimi", "derin öğrenme", "sinir ağı", "algoritma",
-    "AI", "artificial intelligence", "machine learning", "deep learning",
-    "neural network", "algorithm", "LLM", "large language model", "büyük dil modeli"
-]
+new_last_run = datetime.now(timezone.utc)
+sent_any = False
 
-def fetch_and_filter_news():
-    all_news = []
-    for source in NEWS_SOURCES:
-        try:
-            feed = feedparser.parse(source["rss_url"])
-            if feed.bozo:
-                print(f"Hata oluştu {source['name']} RSS beslemesini ayrıştırırken: {feed.bozo_exception}")
-                continue
+for feed_url in RSS_FEEDS:
+    feed = feedparser.parse(feed_url)
+    for entry in feed.entries:
+        # pubDate parse edilip datetime objesine dönüştürülüyor
+        pub = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
+        # sadece son çalıştırmadan sonra yayınlananları al
+        if pub <= last_run:
+            continue
 
-            for entry in feed.entries:
-                title = entry.title if hasattr(entry, 'title') else 'Başlıksız'
-                link = entry.link if hasattr(entry, 'link') else source["rss_url"]
-                summary = entry.summary if hasattr(entry, 'summary') else ''
-                
-                # Başlık veya özet içinde anahtar kelime filtrelemesi
-                if any(keyword.lower() in title.lower() or keyword.lower() in summary.lower() for keyword in KEYWORDS):
-                    all_news.append({
-                        "title": title,
-                        "link": link,
-                        "source": source["name"]
-                    })
-        except Exception as e:
-            print(f"Hata oluştu {source['name']} RSS beslemesini çekerken veya işlerken: {e}")
-            
-    return all_news
+        title = entry.title
+        link  = entry.link
+        # (isteğe bağlı keyword filtresi buraya gelebilir)
 
-def send_to_discord(webhook_url, content):
-    if not webhook_url:
-        print("Webhook URL ayarlanmadı.")
-        return
+        # Discord’a gönder
+        requests.post(WEBHOOK, json={'content': f'**{title}**\n{link}'}).raise_for_status()
+        sent_any = True
 
-    headers = {"Content-Type": "application/json"}
-    payload = {"content": content}
+# 2) Son çalıştırma zamanını güncelle
+with open(LAST_RUN_FILE, 'w') as f:
+    f.write(new_last_run.isoformat())
+
+# 3) GitHub’a commit et (sadece eğer bir gönderim olduysa)
+if sent_any:
+    gh   = Github(os.environ['GITHUB_TOKEN'])
+    repo = gh.get_repo(os.environ['GITHUB_REPOSITORY'])
     try:
-        response = requests.post(webhook_url, headers=headers, data=json.dumps(payload))
-        response.raise_for_status() # HTTP hatalarını kontrol et (200-299 arası değilse hata fırlatır)
-        print(f"Mesaj Discord'a gönderildi: {content[:50]}...")
-    except requests.exceptions.RequestException as e:
-        print(f"Discord'a gönderirken hata oluştu: {e}")
-    except Exception as e:
-        print(f"Bilinmeyen bir hata oluştu Discord'a mesaj gönderirken: {e}")
-
-
-if __name__ == '__main__':
-    ai_news = fetch_and_filter_news()
-    if ai_news:
-        for news_item in ai_news:
-            message = f"**Kaynak: {news_item['source']}**\n**Başlık:** {news_item['title']}\n**Link:** {news_item['link']}"
-            send_to_discord(APPROVAL_WEBHOOK_URL, message)
-    else:
-        print("Yeni AI haberi bulunamadı.")
+        contents = repo.get_contents(LAST_RUN_FILE)
+        repo.update_file(contents.path,
+                         f"Update last_run to {new_last_run.isoformat()}",
+                         new_last_run.isoformat(),
+                         contents.sha, branch='main')
+    except:
+        repo.create_file(LAST_RUN_FILE,
+                         f"Create last_run {new_last_run.isoformat()}",
+                         new_last_run.isoformat(),
+                         branch='main')
