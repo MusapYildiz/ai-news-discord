@@ -1,40 +1,31 @@
-name: Fetch Daily AI News
+name: Daily AI News to Discord
 
 on:
+  workflow_dispatch:
   schedule:
-    - cron: "0 10 * * *"  # Her gün 10:00 UTC (Türkiye saatiyle 13:00)
-  workflow_dispatch:  # Manuel çalıştırma
+    - cron: '0 9 * * *'
 
 jobs:
-  fetch-news:
+  post-news:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Repo'yu klonla
+      - name: Checkout repo
         uses: actions/checkout@v3
+        with:
+          persist-credentials: true
 
-      - name: Python ortamını kur
+      - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.x'
 
-      - name: Gereksinimleri yükle
+      - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Haberleri çek
-        run: python news_fetcher.py
-
-      - name: Değişiklikleri commitle ve pusha
-        run: |
-          git config --global user.name "github-actions"
-          git config --global user.email "github-actions@github.com"
-          git add pending.json last_run.txt
-          git commit -m "Update news"
-          git push
-
-      - name: Discord botu ile haberleri gönder
-        run: python discord_sender.py
+      - name: Run news poster
         env:
-          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
-          DISCORD_APPROVAL_CHANNEL_ID: ${{ secrets.DISCORD_APPROVAL_CHANNEL_ID }}
-          DISCORD_PUBLISH_CHANNEL_ID: ${{ secrets.DISCORD_PUBLISH_CHANNEL_ID }}
+          DISCORD_WEBHOOK:    ${{ secrets.DISCORD_WEBHOOK }}
+          GITHUB_TOKEN:       ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY:  ${{ github.repository }}
+        run: python post_news.py
