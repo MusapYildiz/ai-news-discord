@@ -1,54 +1,40 @@
 import os, json, feedparser, requests
-from datetime import datetime, timezone
-from github import Github
 
-# Ayarlar
-RSS_FEEDS      = json.load(open('sites.json'))
-WEBHOOK        = os.environ['DISCORD_WEBHOOK']
-LAST_RUN_FILE  = 'last_run.txt'
+# 1) Ayarlar
+RSS_FEEDS   = json.load(open('feeds.json'))
+WEBHOOK     = os.environ['DISCORD_WEBHOOK']
+KEYWORDS    = ['artificial intelligence','machine learning','deep learning',
+               'neural network','ai ','gpt','transformer']
+LAST_FILE   = 'last_urls.json'
 
-# 1) Son çalıştırma zamanını oku (yoksa şimdi)
-if os.path.exists(LAST_RUN_FILE):
-    last_run = datetime.fromisoformat(open(LAST_RUN_FILE).read().strip())
-else:
-    last_run = datetime.now(timezone.utc)
+# 2) Önceki hali oku
+last_map = json.load(open(LAST_FILE)) if os.path.exists(LAST_FILE) else {}
 
-new_last_run = datetime.now(timezone.utc)
-sent_any = False
+updated = False
 
 for feed_url in RSS_FEEDS:
     feed = feedparser.parse(feed_url)
-    for entry in feed.entries:
-        # pubDate parse edilip datetime objesine dönüştürülüyor
-        pub = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
-        # sadece son çalıştırmadan sonra yayınlananları al
-        if pub <= last_run:
-            continue
+    if not feed.entries: continue
 
-        title = entry.title
-        link  = entry.link
-        # (isteğe bağlı keyword filtresi buraya gelebilir)
+    latest = feed.entries[0]
+    url, title, desc = latest.link, latest.title.lower(), (latest.summary or '').lower()
 
-        # Discord’a gönder
-        requests.post(WEBHOOK, json={'content': f'**{title}**\n{link}'}).raise_for_status()
-        sent_any = True
+    # 3) Filtre: en az bir keyword eşleşmeli
+    if not any(k in title or k in desc for k in KEYWORDS):
+        continue
 
-# 2) Son çalıştırma zamanını güncelle
-with open(LAST_RUN_FILE, 'w') as f:
-    f.write(new_last_run.isoformat())
+    if last_map.get(feed_url) == url:
+        continue
 
-# 3) GitHub’a commit et (sadece eğer bir gönderim olduysa)
-if sent_any:
-    gh   = Github(os.environ['GITHUB_TOKEN'])
-    repo = gh.get_repo(os.environ['GITHUB_REPOSITORY'])
-    try:
-        contents = repo.get_contents(LAST_RUN_FILE)
-        repo.update_file(contents.path,
-                         f"Update last_run to {new_last_run.isoformat()}",
-                         new_last_run.isoformat(),
-                         contents.sha, branch='main')
-    except:
-        repo.create_file(LAST_RUN_FILE,
-                         f"Create last_run {new_last_run.isoformat()}",
-                         new_last_run.isoformat(),
-                         branch='main')
+    # 4) Gönder
+    requests.post(WEBHOOK, json={'content': f'**{latest.title}**\n{url}'}).raise_for_status()
+    last_map[feed_url] = url
+    updated = True
+    # eğer feed başına sadece 1 haber yollayacaksan:
+    # break
+
+# 5) Güncelle ve commit et (aynı önceki örnekteki gibi)
+if updated:
+    with open(LAST_FILE, 'w') as f:
+        json.dump(last_map, f, indent=2)
+    # … GitHub commit kısmı …
