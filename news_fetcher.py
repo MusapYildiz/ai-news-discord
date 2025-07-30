@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from github import Github
 
 # Ayarlar
-RSS_FEEDS      = json.load(open('feeds.json'))
+RSS_FEEDS      = json.load(open('sites.json'))
 WEBHOOK        = os.environ['DISCORD_WEBHOOK']
 LAST_RUN_FILE  = 'last_run.txt'
 
